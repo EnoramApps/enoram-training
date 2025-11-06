@@ -6,10 +6,12 @@ This folder contains all **technical and UX documentation** for Problem 1 – _W
 
 ## 📄 Files Overview
 
-| File               | Description                                                       |
-| ------------------ | ----------------------------------------------------------------- |
-| `technical_doc.md` | Full technical design document — architecture, ERD, API, and flow |
-| `README.md`        | Overview of the documentation folder                              |
+| File                             | Description                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `technical_doc.md`               | Full technical design document — architecture, ERD, API, and flow                                    |
+| `backend_components_diagram.jpg` | Visual diagram showing backend components (Go API, Firestore, Auth, and Frontend interaction)        |
+| `backend_sequence_diagram.jpg`   | Sequence diagram illustrating the “Candidate Apply Job” flow between Frontend, Go API, and Firestore |
+| `README.md`                      | Overview of the documentation folder                                                                 |
 
 ---
 
