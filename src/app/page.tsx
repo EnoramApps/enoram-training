@@ -1,10 +1,14 @@
 "use client";
+
 import Api from "./api/api";
 import { useState, useEffect } from "react";
-import pdfToText from "react-pdftotext";
-import { Document, Page } from "react-pdf";
-import "react-pdf/dist/Page/TextLayer.css";
-import "react-pdf/dist/Page/AnnotationLayer.css";
+import dynamic from "next/dynamic";
+
+// React-PDF for client
+const PDFViewer = dynamic(() => import("./pdf-viewer"), {
+  ssr: false,
+});
+
 import { FaRegTrashCan } from "react-icons/fa6";
 import { VscJson } from "react-icons/vsc";
 import { ReactTyped } from "react-typed";
@@ -36,19 +40,56 @@ export default function Home() {
 
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const extractedText = await pdfToText(file);
-      setPdfFile(file);
+    if (!file) return;
 
-      // Generate preview
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setPdfPreview(event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
-      handleOpenAI(e, extractedText);
+    setPdfFile(file);
+
+     // Generate preview
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) {
+        setPdfPreview(event.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+
+    // api/parse-pdf
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("/api/parse-pdf", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (data.error) {
+        alert("Gagal membaca PDF: " + data.error);
+        return;
+      }
+
+      // get text from response
+      const extractedText =
+        data.text ||
+        data.result ||
+        data.raw_output ||
+        JSON.stringify(data, null, 2);
+
+
+      if (!extractedText) {
+        alert("PDF berhasil diunggah, tapi teks tidak ditemukan.");
+        return;
+      }
+
+      console.log("📄 Extracted Text (preview):", extractedText.slice(0, 200));
+
+      // send text hasil parsing ke AI
+      handleOpenAI(extractedText);
+    } catch (err: any) {
+      console.error("❌ Error uploading or parsing PDF:", err);
+      alert("Terjadi kesalahan saat membaca PDF.");
     }
   };
 
@@ -57,34 +98,22 @@ export default function Home() {
     setPdfPreview(null);
     setOutput(null);
     const fileInput = document.getElementById("pdfInput") as HTMLInputElement;
-    if (fileInput) {
-      fileInput.value = "";
-    }
+    if (fileInput) fileInput.value = "";
   };
-
   const [scale, setScale] = useState(0.4); // Default scale for desktop
 
   useEffect(() => {
     // Update scale based on window size
     const handleResize = () => {
-      if (window.innerWidth < 768) {
-        setScale(1); // Full scale for mobile
-      } else {
-        setScale(0.4); // Smaller scale for desktop
-      }
+      if (window.innerWidth < 768) setScale(1); // Full scale for mobile
+      else setScale(0.4); // Smaller scale for desktop
     };
-
     handleResize(); // Initial check for scale on load
-
     window.addEventListener("resize", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize); // Cleanup on unmount
-    };
+    return () => window.removeEventListener("resize", handleResize); // Cleanup on unmount
   }, []);
 
-  const handleTab = () => {
-    setTab(tab === "summarize" ? "raw" : "summarize");
-  };
+  const handleTab = () => setTab(tab === "summarize" ? "raw" : "summarize");
 
   return (
     <div className="h-dvh">
@@ -96,11 +125,13 @@ export default function Home() {
           Resume DemoAI
         </div>
       </nav>
+
       <main
         className={`${
           output ? "h-fit" : "h-full"
         } pb-6 w-full grid grid-cols-1 lg:grid-cols-2 gap-8 items-start px-4 sm:px-12 md:px-36`}
       >
+        {/* === Upload & Preview Section === */}
         <div
           className={`h-full flex flex-col items-center ${
             output ? "justify-start" : "justify-center"
@@ -123,33 +154,22 @@ export default function Home() {
               />
             </div>
           )}
-          {pdfPreview && (
-            <div className="w-full sm:w-11/12 lg:w-full h-[400px] md:h-[700px] no-scrollbar overflow-y-auto border rounded-lg shadow-md">
-              <Document file={pdfPreview}>
-                <Page
-                  pageNumber={1}
-                  loading="Loading PDF..."
-                  scale={scale}
-                  width={
-                    window.innerWidth < 1024
-                      ? 390
-                      : document.querySelector(".w-full")?.clientWidth || 500
-                  } // Adjust width based on the parent container
-                />
-              </Document>
-            </div>
-          )}
+
+          {pdfPreview && <PDFViewer pdfPreview={pdfPreview} />}
+
           {pdfFile && (
             <div className="flex items-center gap-4">
               <div className="font-semibold text-sm md:text-base">
                 {pdfFile.name}
               </div>
-              <button onClick={handleRemovePdf} className="">
+              <button onClick={handleRemovePdf}>
                 <FaRegTrashCan className="text-sm md:text-base" />
               </button>
             </div>
           )}
         </div>
+
+        {/* === Output / AI Summarized Section === */}
         <div
           className={`${
             output ? "h-fit" : "h-full"
@@ -157,272 +177,46 @@ export default function Home() {
         >
           {output && (
             <div className="flex justify-end items-center">
-              <button onClick={handleTab} className="">
+              <button onClick={handleTab}>
                 <VscJson className="text-sm md:text-base" />
               </button>
             </div>
           )}
-          {tab === "summarize" && (
-            <div
-              className={`h-full w-full flex flex-col items-start  ${
-                output ? "justify-start" : "justify-center"
-              } ${output ? "gap-6" : loading ? "gap-6" : "gap-20"} font-sans`}
-            >
-              {loading ? (
-                <Skeleton height={20} width={200} count={3} />
-              ) : (
-                output?.personal_information && (
-                  <div className="space-y-0 lg:space-y-2 w-full flex flex-col">
-                    <ReactTyped
-                      strings={[`${output.personal_information?.name}`]}
-                      className="text-2xl font-bold"
-                      typeSpeed={10}
-                      showCursor={false}
-                      startWhenVisible={true}
-                    />
-                    <ReactTyped
-                      strings={[`${output.personal_information?.title}`]}
-                      className="text-xl font-semibold"
-                      typeSpeed={10}
-                      showCursor={false}
-                      startDelay={200}
-                      startWhenVisible={true}
-                    />
-                    <ReactTyped
-                      strings={[`${output.personal_information?.city}`]}
-                      className="text-lg"
-                      typeSpeed={10}
-                      showCursor={false}
-                      startDelay={300}
-                      startWhenVisible={true}
-                    />
-                  </div>
-                )
-              )}
-              <div className="space-y-0 lg:space-y-2 w-full flex flex-col">
-                <div className="text-xl font-semibold">Contact</div>
-                {loading ? (
-                  <Skeleton height={20} width={200} count={3} />
-                ) : (
-                  output?.contact && (
-                    <div className="space-y-1 font-semibold">
-                      <div className="grid grid-cols-3 items-center">
-                        <ReactTyped
-                          strings={[`Email`]}
-                          className="text-sm md:text-base"
-                          typeSpeed={10}
-                          showCursor={false}
-                          startDelay={400}
-                          startWhenVisible={true}
-                        />
-                        <ReactTyped
-                          strings={[`: ${output.contact?.email}`]}
-                          className="text-sm md:text-base col-span-2"
-                          typeSpeed={10}
-                          showCursor={false}
-                          startDelay={400}
-                          startWhenVisible={true}
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 items-center">
-                        <ReactTyped
-                          strings={[`Linkedin`]}
-                          className="text-sm md:text-base"
-                          typeSpeed={10}
-                          showCursor={false}
-                          startDelay={500}
-                          startWhenVisible={true}
-                        />
-                        <ReactTyped
-                          strings={[`: ${output.contact?.linkedin || "-"}`]}
-                          className="text-sm md:text-base col-span-2"
-                          typeSpeed={10}
-                          showCursor={false}
-                          startDelay={500}
-                          startWhenVisible={true}
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 items-center">
-                        <ReactTyped
-                          strings={[`Phone`]}
-                          className="text-sm md:text-base"
-                          typeSpeed={10}
-                          showCursor={false}
-                          startDelay={600}
-                          startWhenVisible={true}
-                        />
-                        <ReactTyped
-                          strings={[`: ${output.contact?.phone || "-"}`]}
-                          className="text-sm md:text-base col-span-2"
-                          typeSpeed={10}
-                          showCursor={false}
-                          startDelay={600}
-                          startWhenVisible={true}
-                        />
-                      </div>
-                    </div>
-                  )
-                )}
-              </div>
-              <div className="space-y-0 lg:space-y-2 w-full flex flex-col">
-                <div className="text-xl font-semibold">Experience</div>
-                {loading ? (
-                  <Skeleton height={20} width={200} count={3} />
-                ) : (
-                  output?.experience && (
-                    <div className="space-y-1 font-semibold">
-                      {output.experience?.map(
-                        (exp: Experience, index: number) => (
-                          <div
-                            key={index}
-                            className="grid grid-cols-3 items-start"
-                          >
-                            <ReactTyped
-                              strings={[`${exp.startYear} - ${exp.endYear}`]}
-                              className="text-sm md:text-base"
-                              typeSpeed={10}
-                              showCursor={false}
-                              startDelay={700}
-                              startWhenVisible={true}
-                            />
-                            <ReactTyped
-                              strings={[`${exp.title} at ${exp.company}`]}
-                              className="text-xs md:text-base col-span-2"
-                              typeSpeed={10}
-                              showCursor={false}
-                              startDelay={700}
-                              startWhenVisible={true}
-                            />
-                          </div>
-                        )
-                      )}
-                    </div>
-                  )
-                )}
-              </div>
-              <div className="space-y-0 lg:space-y-2 w-full flex flex-col">
-                <div className="text-xl font-semibold">Education</div>
-                {loading ? (
-                  <Skeleton height={20} width={200} count={3} />
-                ) : (
-                  Array.isArray(output?.education) && (
-                    <div className="space-y-1 font-semibold">
-                      {output.education?.map(
-                        (edu: Education, index: number) => (
-                          <div key={index}>
-                            <div className="grid grid-cols-3 items-center">
-                              <ReactTyped
-                                strings={[`University`]}
-                                className="text-sm md:text-base"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={800}
-                                startWhenVisible={true}
-                              />
-                              <ReactTyped
-                                strings={[`: ${edu.university}`]}
-                                className="text-sm md:text-base col-span-2"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={800}
-                                startWhenVisible={true}
-                              />
-                            </div>
-                            <div className="grid grid-cols-3 items-center">
-                              <ReactTyped
-                                strings={[`Faculty/Major`]}
-                                className="text-sm md:text-base"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={900}
-                                startWhenVisible={true}
-                              />
-                              <ReactTyped
-                                strings={[`: ${edu.degree}`]}
-                                className="text-sm md:text-base col-span-2"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={900}
-                                startWhenVisible={true}
-                              />
-                            </div>
-                            <div className="grid grid-cols-3 items-center">
-                              <ReactTyped
-                                strings={[`GPA`]}
-                                className="text-sm md:text-base"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={1000}
-                                startWhenVisible={true}
-                              />
-                              <ReactTyped
-                                strings={[`: ${edu.gpa}`]}
-                                className="text-sm md:text-base col-span-2"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={1000}
-                                startWhenVisible={true}
-                              />
-                            </div>
-                            <div className="grid grid-cols-3 items-center">
-                              <ReactTyped
-                                strings={[`Dates`]}
-                                className="text-sm md:text-base"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={1100}
-                                startWhenVisible={true}
-                              />
-                              <ReactTyped
-                                strings={[
-                                  `: ${edu.startYear} - ${edu.endYear}`,
-                                ]}
-                                className="text-sm md:text-base col-span-2"
-                                typeSpeed={10}
-                                showCursor={false}
-                                startDelay={1100}
-                                startWhenVisible={true}
-                              />
-                            </div>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  )
-                )}
-              </div>
-              <div className="space-y-0 lg:space-y-2 w-full flex flex-col">
-                <div className="text-xl font-semibold">Skills</div>
-                {loading ? (
-                  <Skeleton height={20} width={200} />
-                ) : (
-                  output?.additional_information && (
-                    <ReactTyped
-                      strings={[
-                        `${output.additional_information?.technical_skills}`,
-                      ]}
-                      className="text-sm md:text-base font-semibold"
-                      typeSpeed={10}
-                      showCursor={false}
-                      startDelay={1200}
-                      startWhenVisible={true}
-                    />
-                  )
-                )}
-              </div>
-            </div>
-          )}
-          {tab === "raw" && (
+
+          {tab === "summarize" ? (
+        loading ? (
+          <Skeleton height={20} width={200} count={5} />
+        ) : (
+          <div className="space-y-4 text-gray-700 dark:text-gray-200">
+            <h2 className="text-xl font-bold">
+              {output?.personal_information?.name || "—"}
+            </h2>
+            <p className="font-medium">
+              {output?.personal_information?.title || "No title"}
+            </p>
+            <p>{output?.personal_information?.city || "No city"}</p>
+
             <div>
-              {output && (
-                <div className="w-full">
-                  <pre className="w-full text-wrap font-sans font-bold text-xs md:text-sm">
-                    {JSON.stringify(output, null, 2)}
-                  </pre>
-                </div>
-              )}
+              <h3 className="font-semibold text-lg mt-4 mb-2">Contact</h3>
+              <ul className="text-sm space-y-1">
+                <li>📧 {output?.contact?.email || "—"}</li>
+                <li>🔗 {output?.contact?.linkedin || "—"}</li>
+                <li>📞 {output?.contact?.phone || "—"}</li>
+              </ul>
             </div>
-          )}
+
+            <div>
+              <h3 className="font-semibold text-lg mt-4 mb-2">Skills</h3>
+              <p>{output?.additional_information?.technical_skills || "—"}</p>
+            </div>
+          </div>
+        )
+      ) : (
+  <pre className="text-xs text-gray-500 dark:text-gray-400 overflow-x-auto">
+    {JSON.stringify(output, null, 2)}
+  </pre>
+)}
+
         </div>
       </main>
     </div>

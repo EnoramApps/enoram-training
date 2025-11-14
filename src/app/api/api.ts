@@ -37,6 +37,7 @@ interface AdditionalInformation {
 }
 
 interface Output {
+  result?: any;
   personal_information?: PersonalInformation | null;
   contact?: Contact | null;
   experience: Experience[] | null;
@@ -45,88 +46,56 @@ interface Output {
 }
 
 function Api() {
-  const [output, setOutput] = useState<Output | null>();
+  const [output, setOutput] = useState<Output | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleOpenAI = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    data: string
-  ) => {
-    e.preventDefault();
+  /**
+   * Handle AI Parsing
+   * @param data - text yang sudah diekstrak dari PDF
+   */
+  const handleOpenAI = async (data: string) => {
     try {
       setLoading(true);
-      const response = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "developer",
-              content: "You are a helpful assistant.",
-            },
-            {
-              role: "user",
-              content: `please summarize this resume or CV briefly with this layout as JSON Format:
-              1. first layout is name, Position or tittle, city,
-              2. second layout is contact email, linkedin, and contact number,
-              3. third layout is all experience,
-              5. fifth layout is education,
-              from this text: ${data}, make exactly like this:
-              {
-                personal_information: {
-                  name: "",
-                  title: "",
-                  city: "",
-                },
-                contact: {
-                  email: "",
-                  linkedin: "",
-                  phone: "",
-                },
-                experience: [
-                  {
-                    company: "",
-                    title: "",
-                    startYear: "",
-                    endYear: "",
-                    location: "",
-                    description: "",
-                  },
-                ],
-                education: [
-                  {
-                    university: "",
-                    degree: "",
-                    gpa: "",
-                    startYear: "",
-                    endYear: "",
-                  }
-                ],
-                additional_information: {
-                  technical_skills: "",
-                },
-              } and return only JSON format`,
-            },
-          ],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_OPENAI_API_KEY}`,
-            "Content-Type": "application/json",
-          },
+      console.log("🔵 Sending text to /api/parse:", data.slice(0, 200));
+
+      const response = await axios.post("/api/parse", { text: data });
+      console.log("🟢 Raw Response:", response.data);
+
+      // === Auto-detect response structure and parse ===
+      let parsedOutput = response.data;
+
+      if (typeof response.data === "string") {
+        try {
+          parsedOutput = JSON.parse(response.data);
+        } catch {
+          console.warn("⚠️ Response bukan JSON valid (string biasa).");
         }
+      } else if (response.data?.choices?.[0]?.message?.content) {
+        try {
+          parsedOutput = JSON.parse(
+            response.data.choices[0].message.content.replace(/```json|```/g, "")
+          );
+        } catch {
+          parsedOutput = {
+            raw_output: response.data.choices[0].message.content,
+          };
+        }
+      }
+
+      console.log("🧩 Parsed Output:", parsedOutput);
+      setOutput(parsedOutput);
+    } catch (error: any) {
+      console.error(
+        "🔴 Error calling internal API:",
+        error.response?.data || error.message
       );
-      setOutput(
-        JSON.parse(
-          response.data.choices[0].message.content.replace(/```json|```/g, "")
-        )
-      );
-    } catch (error) {
-      console.error("Error:", error);
     } finally {
       setLoading(false);
     }
   };
+
+  console.log("ini output output:", output);
+
 
   return { output, setOutput, handleOpenAI, loading };
 }
